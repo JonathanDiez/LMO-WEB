@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ORDENENANDO | LA MESA</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div id="username-modal" class="modal">
+        <div class="modal-inner">
+            <div class="modal-title">INTRODUCE TU NOMBRE</div>
+            <div class="note">Elige un nombre para participar</div>
+            <input type="text" id="username-input" maxlength="20" placeholder="JUGADOR_1">
+            <button id="username-submit" class="small full-width">EMPEZAR</button>
+            <button id="username-admin" class="small full-width" style="margin-top:8px">SOY ADMIN</button>
+        </div>
+    </div>
+
+    <div id="code-modal" class="modal hidden">
+        <div class="modal-inner">
+            <div class="modal-title">CODIGO SECRETO</div>
+            <div class="note">Introduce el codigo para limpiar la lista (necesitas ser admin)</div>
+            <input type="password" id="code-input" maxlength="6" placeholder="******">
+            <div class="controls">
+                <button id="code-submit" class="small">ENVIAR</button>
+                <button id="code-close" class="small">CERRAR</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="login-modal" class="modal hidden">
+        <div class="modal-inner">
+            <div class="modal-title">INICIAR SESION (ADMIN)</div>
+            <input id="email-input" type="email" placeholder="correo@ejemplo.com">
+            <input id="password-input" type="password" placeholder="Contrasena">
+            <div class="controls">
+                <button id="login-submit" class="small">INICIAR</button>
+                <button id="login-cancel" class="small">CERRAR</button>
+            </div>
+            <div class="note">Tambien puedes participar sin cuenta (guest) con un nombre.</div>
+        </div>
+    </div>
+
+    <div id="message" class="msg hidden"></div>
+    <div id="secret-btn" class="secret">🔑</div>
+
+    <div id="main-wrap" class="wrap hidden">
+        <div class="topbar">
+            <div class="title">ORDENANDO LA MESA</div>
+            <div id="countdown" class="countdown">00:00:00</div>
+            <div class="auth">
+                <div class="user-label"><span id="user-display"></span></div>
+                <button id="change-name-btn" class="small">CAMBIAR DE USUARIO</button>
+            </div>
+        </div>
+
+        <div class="stage">
+            <button id="main-button" class="big-btn locked" disabled>
+                <span id="button-text"></span>
+                <div id="padlock" class="padlock">🔒</div>
+            </button>
+        </div>
+
+        <div class="side">
+            <div class="side-title">RANKING (<span id="click-count">0</span>)</div>
+            <ol id="users-list" class="users">
+                <div class="empty-msg">Esperando a gente...</div>
+            </ol>
+            <div class="controls">
+                <button id="refresh-btn" class="small">REFRESCAR</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+</body>
+
+</html>
