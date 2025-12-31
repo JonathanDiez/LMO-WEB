@@ -1,6 +1,3 @@
-// app.js (reemplaza totalmente)
-/* Requiere firebase.js en el mismo directorio */
-
 import {
     auth,
     db,
@@ -11,7 +8,6 @@ import {
     ref,
     set,
     push,
-    remove,
     onValue,
     get,
     runTransaction,
@@ -26,6 +22,7 @@ let clickList = [];
 let isUnlocked = false;
 let audioContext = null;
 let updateInterval = null;
+let lastCountdownSecond = null;
 let serverTimeOffset = 0;
 let roundStartServerTimestamp = null;
 let clientRoundPerfStart = null;
@@ -58,6 +55,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initServerTimeOffset();
     initAuthListeners();
     loadSession();
+    addSoundToInputs();
 });
 
 /* ---------- Elements ---------- */
@@ -94,10 +92,11 @@ function initElements() {
 /* ---------- Event listeners ---------- */
 function setupEventListeners() {
     if (elements.usernameSubmit) elements.usernameSubmit.addEventListener('click', handleUsernameSubmit);
-    if (elements.usernameInput) elements.usernameInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') handleUsernameSubmit(); });
+    if (elements.usernameInput) elements.usernameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleUsernameSubmit(); });
 
     if (elements.usernameAdmin) {
         elements.usernameAdmin.addEventListener('click', () => {
+            playSfx('modal');
             if (elements.usernameModal) elements.usernameModal.classList.add('hidden');
             if (elements.loginModal) elements.loginModal.classList.remove('hidden');
             if (elements.emailInput) elements.emailInput.focus();
@@ -118,7 +117,13 @@ function setupEventListeners() {
 
     if (elements.mainButton) {
         elements.mainButton.addEventListener('click', handleMainButtonClick);
-        elements.mainButton.addEventListener('mouseenter', () => { if (isUnlocked) playSfx('hover'); });
+        elements.mainButton.addEventListener('mouseenter', () => {
+            if (isUnlocked) {
+                playSfx('hover');
+            } else {
+                playSfx('error');
+            }
+        });
     }
 
     if (elements.secretBtn) {
@@ -147,13 +152,46 @@ function ensureAudio() {
     if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
     if (audioContext && audioContext.state === 'suspended') audioContext.resume().catch(() => { });
 }
-function playSfx(type) {
-    ensureAudio();
+
+function playArpeggioUp(frequencies, noteDur, vol) {
+    if (!audioContext) return;
+    const ctx = audioContext;
+    frequencies.forEach((freq, idx) => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.connect(g);
+        g.connect(ctx.destination);
+        o.type = 'square';
+        o.frequency.value = freq;
+        const startTime = ctx.currentTime + (idx * noteDur);
+        g.gain.setValueAtTime(vol, startTime);
+        g.gain.exponentialRampToValueAtTime(0.001, startTime + noteDur);
+        o.start(startTime);
+        o.stop(startTime + noteDur);
+    });
+}
+
+function playSlideDown(startFreq, endFreq, dur, vol) {
     if (!audioContext) return;
     const ctx = audioContext;
     const o = ctx.createOscillator();
     const g = ctx.createGain();
-    o.connect(g); g.connect(ctx.destination);
+    o.connect(g);
+    g.connect(ctx.destination);
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(startFreq, ctx.currentTime);
+    o.frequency.exponentialRampToValueAtTime(endFreq, ctx.currentTime + dur);
+    g.gain.setValueAtTime(vol, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+    o.start(ctx.currentTime);
+    o.stop(ctx.currentTime + dur);
+}
+
+function playSfx(type) {
+    ensureAudio();
+    if (!audioContext) return;
+    const ctx = audioContext;
+
     const map = {
         hover: { freq: 420, dur: 0.04, type: 'square', vol: 0.05 },
         click: { freq: 900, dur: 0.06, type: 'square', vol: 0.14 },
@@ -162,13 +200,54 @@ function playSfx(type) {
         open: { freq: 600, dur: 0.08, type: 'triangle', vol: 0.10 },
         reset: { freq: 1100, dur: 0.18, type: 'sawtooth', vol: 0.16 },
         admin: { freq: 1600, dur: 0.18, type: 'sine', vol: 0.16 },
-        login: { freq: 1200, dur: 0.12, type: 'triangle', vol: 0.12 }
+        login: { freq: 1200, dur: 0.12, type: 'triangle', vol: 0.12 },
+        input: { freq: 800, dur: 0.03, type: 'sine', vol: 0.06 },
+        modal: { freq: 500, dur: 0.15, type: 'triangle', vol: 0.12 },
+        unlock: { freq: 1800, dur: 0.2, type: 'sawtooth', vol: 0.18 },
+        countdown: { freq: 1000, dur: 0.05, type: 'square', vol: 0.08 }
     };
+
     const s = map[type] || map.click;
-    o.type = s.type; o.frequency.value = s.freq;
+
+    if (type === 'success') {
+        playArpeggioUp([1200, 1400, 1600, 2000], 0.05, 0.15);
+        return;
+    }
+
+    if (type === 'error') {
+        playSlideDown(400, 150, 0.3, 0.12);
+        return;
+    }
+
+    if (type === 'unlock') {
+        playArpeggioUp([1000, 1400, 1800, 2200], 0.04, 0.18);
+        return;
+    }
+
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.connect(g);
+    g.connect(ctx.destination);
+    o.type = s.type;
+    o.frequency.value = s.freq;
     g.gain.setValueAtTime(s.vol, ctx.currentTime);
     g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + s.dur);
-    o.start(ctx.currentTime); o.stop(ctx.currentTime + s.dur);
+    o.start(ctx.currentTime);
+    o.stop(ctx.currentTime + s.dur);
+}
+
+function addSoundToInputs() {
+    const inputs = document.querySelectorAll('input[type="text"], input[type="email"], input[type="password"]');
+    inputs.forEach(input => {
+        input.addEventListener('input', () => playSfx('input'));
+        input.addEventListener('focus', () => playSfx('open'));
+    });
+
+    const allButtons = document.querySelectorAll('button:not(#main-button)');
+    allButtons.forEach(btn => {
+        btn.addEventListener('mouseenter', () => playSfx('hover'));
+        btn.addEventListener('click', () => playSfx('click'));
+    });
 }
 
 /* ---------- UI helpers ---------- */
@@ -179,7 +258,7 @@ function showMessage(text, type = 'info') {
     setTimeout(() => elements.message.classList.add('hidden'), 2000);
 }
 
-/* ---------- Time helpers (Europe/Madrid) ---------- */
+/* ---------- Time helpers (Hora local transformando el formato ingles) ---------- */
 function _getSpainPartsForDate(date = new Date()) {
     const fmt = new Intl.DateTimeFormat('en-GB', {
         timeZone: 'Europe/Madrid',
@@ -263,11 +342,11 @@ function getNextUnlockTime() {
     return new Date(Date.now() + Math.max(0, Math.floor(bestDeltaSeconds * 1000)));
 }
 
+/* ---------- REVISAR PARA ELIMINAR ---------- */
 function showAdminUI() {
-    // Marca al usuario como admin en la UI
+    playSfx('admin');
     document.body.classList.add("is-admin");
 
-    // Ejemplos de cosas que podrías mostrar
     const secretBtn = document.getElementById("secret-btn");
     if (secretBtn) secretBtn.classList.remove("hidden");
 
@@ -302,6 +381,7 @@ function initAuthListeners() {
                     writeUserProfile(uid, username).catch(() => { });
                 }
                 if (elements.userDisplay) elements.userDisplay.textContent = username;
+                playSfx('success');
                 if (elements.usernameModal) elements.usernameModal.classList.add('hidden');
                 if (elements.mainWrap) elements.mainWrap.classList.remove('hidden');
                 if (elements.changeNameBtn) elements.changeNameBtn.textContent = 'CAMBIAR DE USUARIO';
@@ -352,7 +432,6 @@ async function writeUserProfile(targetUid, newUsername) {
     }
 
     try {
-        // update to avoid accidentally removing other fields
         await update(ref(db, `users/${targetUid}`), {
             username: newUsername,
             lastSeen: serverTimestamp()
@@ -363,7 +442,7 @@ async function writeUserProfile(targetUid, newUsername) {
     }
 }
 
-/* ---------- Sign in with email (admin) ---------- */
+/* ---------- Sign in with email (para admins) ---------- */
 async function signInWithEmail() {
     const email = (elements.emailInput && elements.emailInput.value || '').trim();
     const pass = (elements.passwordInput && elements.passwordInput.value) || '';
@@ -374,6 +453,7 @@ async function signInWithEmail() {
         await waitForAuthReady(7000).catch(() => { });
         uid = cred.user.uid;
         username = cred.user.displayName || (cred.user.email ? cred.user.email.split('@')[0] : '');
+        saveLocalSession();
         if (elements.userDisplay) elements.userDisplay.textContent = username;
         if (elements.loginModal) elements.loginModal.classList.add('hidden');
         playSfx('login');
@@ -394,7 +474,7 @@ async function signInWithEmail() {
     }
 }
 
-/* ---------- Crear o reanudar usuario anónimo con nombre ---------- */
+/* ---------- Con reanudar usuario anónimo con nombre ---------- */
 async function createOrResumeUserInFirebase(name) {
     name = (String(name || '')).trim().slice(0, 20);
     if (!name) { showMessage('Nombre inválido', 'error'); throw new Error('Nombre inválido'); }
@@ -418,8 +498,8 @@ async function createOrResumeUserInFirebase(name) {
             await writeUserProfile(uid, name);
         } catch (err) {
             console.warn('Escritura /users/<uid> fallida, guardando localmente', err);
-            try { localStorage.setItem('pixelButtonUser', name); } catch (e) { }
             username = name;
+            saveLocalSession();
             if (elements.userDisplay) elements.userDisplay.textContent = username;
             if (elements.usernameModal) elements.usernameModal.classList.add('hidden');
             if (elements.mainWrap) elements.mainWrap.classList.remove('hidden');
@@ -427,8 +507,8 @@ async function createOrResumeUserInFirebase(name) {
             return { uid, username: name, localOnly: true };
         }
 
-        try { localStorage.setItem('pixelButtonUser', name); } catch (e) { }
         username = name;
+        saveLocalSession();
         if (elements.userDisplay) elements.userDisplay.textContent = username;
         if (elements.usernameModal) elements.usernameModal.classList.add('hidden');
         if (elements.mainWrap) elements.mainWrap.classList.remove('hidden');
@@ -449,6 +529,7 @@ function handleChangeUserFlow() {
         signOut(auth).finally(() => {
             if (elements.usernameInput) { elements.usernameInput.value = ''; elements.usernameInput.focus(); }
             if (elements.usernameModal) elements.usernameModal.classList.remove('hidden');
+            playSfx('modal');
             if (elements.mainWrap) elements.mainWrap.classList.add('hidden');
             showMessage('Introduce nuevo nombre', 'info');
         });
@@ -469,7 +550,7 @@ function handleUsernameSubmit() {
     }
 }
 
-/* ---------- Código secreto (admin only) ---------- */
+/* ---------- Codigo secreto (admin only) ---------- */
 function handleCodeSubmit() {
     const code = (elements.codeInput && elements.codeInput.value || '').trim();
     if (!code) return;
@@ -493,7 +574,7 @@ function handleCodeSubmit() {
     if (elements.codeModal) elements.codeModal.classList.add('hidden');
 }
 
-/* ---------- Clicks: escucha remota y render ---------- */
+/* ---------- Clicks escucha y produce ---------- */
 function listenRemoteClicks() {
     onValue(ref(db, 'rounds/current/clicks'), snap => {
         const obj = snap.val();
@@ -512,7 +593,7 @@ function listenRemoteClicks() {
             clickList = arr.map((c, idx) => ({ username: c.username, reaction: c.reaction, position: idx + 1 }));
             renderClickListFirebase();
         });
-    }, { onlyOnce: false });
+    });
 }
 
 function renderClickListFirebase() {
@@ -530,7 +611,7 @@ function renderClickListFirebase() {
     });
 }
 
-/* ---------- Sesión local ---------- */
+/* ---------- Sesion local ---------- */
 function loadSession() {
     const storedUser = localStorage.getItem('pixelButtonUser');
     if (storedUser) {
@@ -548,7 +629,7 @@ function loadSession() {
 }
 function saveLocalSession() { if (username) localStorage.setItem('pixelButtonUser', username); }
 
-/* ---------- Offline queue ---------- */
+/* ---------- Offline busqueda ---------- */
 function loadOfflineQueue() { try { const s = localStorage.getItem(OFFLINE_QUEUE_KEY); offlineQueue = s ? JSON.parse(s) : []; } catch (e) { offlineQueue = []; } }
 function saveOfflineQueue() { try { localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(offlineQueue)); } catch (e) { } }
 function queueOfflineScore(record) {
@@ -561,19 +642,26 @@ function queueOfflineScore(record) {
 function trySyncOfflineQueue() {
     if (!navigator.onLine) return;
     if (offlineQueue.length === 0) return;
+
     ensureAuthenticated().then(user => {
         if (!user) return;
+
         get(ref(db, 'rounds/current/startTimestamp')).then(snap => {
             const serverRoundStart = snap.val() ? String(snap.val()) : null;
             const queue = [...offlineQueue];
+
             (async function processQueue() {
                 for (let item of queue) {
                     try {
                         if (item.roundId && serverRoundStart && item.roundId !== serverRoundStart) {
-                            offlineQueue = offlineQueue.filter(q => q !== item); saveOfflineQueue(); continue;
+                            offlineQueue = offlineQueue.filter(q => q !== item);
+                            saveOfflineQueue();
+                            continue;
                         }
+
                         if (item.uid && auth.currentUser && auth.currentUser.uid === item.uid) {
                             const clickRef = ref(db, `rounds/current/clicks/${item.uid}`);
+
                             const res = await runTransaction(clickRef, current => {
                                 if (current === null) {
                                     return {
@@ -587,9 +675,17 @@ function trySyncOfflineQueue() {
                                 }
                                 return;
                             });
-                            offlineQueue = offlineQueue.filter(q => q !== item); saveOfflineQueue(); markUserClickedCurrentRound();
+
+                            if (res && res.committed) {
+                                playSfx('success');
+                                offlineQueue = offlineQueue.filter(q => q !== item);
+                                saveOfflineQueue();
+                                markUserClickedCurrentRound();
+                            }
+
                         } else {
                             const pushRef = push(ref(db, 'rounds/current/clicks'));
+
                             await set(pushRef, {
                                 uid: item.uid || (auth.currentUser ? auth.currentUser.uid : null),
                                 username: item.username,
@@ -598,9 +694,15 @@ function trySyncOfflineQueue() {
                                 localTs: item.localTs || Date.now(),
                                 serverTimestamp: serverTimestamp()
                             });
-                            offlineQueue = offlineQueue.filter(q => q !== item); saveOfflineQueue(); markUserClickedCurrentRound();
+
+                            playSfx('success');
+                            offlineQueue = offlineQueue.filter(q => q !== item);
+                            saveOfflineQueue();
+                            markUserClickedCurrentRound();
                         }
-                    } catch (err) { continue; }
+                    } catch (err) {
+                        continue;
+                    }
                 }
             })();
         }).catch(() => { });
@@ -635,7 +737,7 @@ function fetchRoundStartTimestamp() {
 
 /* ---------- Click logic ---------- */
 function handleMainButtonClick() {
-    if (!isUnlocked) return;
+    if (!isUnlocked) { playSfx('error'); return; }
     if (!username) { showMessage('Introduce un usuario antes de participar'); return; }
     if (!currentRoundId) { showMessage('Ronda no inicializada'); return; }
     const idKey = `${currentRoundId}_${uid || username}`;
@@ -722,6 +824,9 @@ function updateGameState() {
     isUnlocked = unlocked;
     if (unlocked) {
         if (!lastUnlockedState) {
+            playSfx('unlock');
+            startBackgroundMusic();
+            lastCountdownSecond = null;
             clickedThisRound = false;
             roundStartServerTimestamp = null;
             offlineRoundPerfStart = (typeof performance !== 'undefined' && performance.now) ? performance.now() : null;
@@ -736,19 +841,32 @@ function updateGameState() {
             checkUserClickedFromStorageOrServer();
         }).catch(() => { setCurrentRoundId(offlineRoundLocalTs); checkUserClickedFromStorageOrServer(); });
     } else {
+        stopBackgroundMusic();
+
         if (elements.mainButton) elements.mainButton.classList.remove('unlocked'), elements.mainButton.classList.add('locked'), elements.mainButton.disabled = true;
         if (elements.buttonText) elements.buttonText.textContent = '';
         if (elements.padlock) elements.padlock.classList.remove('hidden');
         if (elements.countdown) elements.countdown.classList.remove('active');
+
         const nextUnlock = getNextUnlockTime();
         if (nextUnlock && elements.countdown) {
             const diff = nextUnlock - new Date();
-            const hours = Math.floor(diff / (1000 * 60 * 60));
-            const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-            const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+            const totalSeconds = Math.ceil(diff / 1000);
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
             elements.countdown.textContent = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+
+            if (totalSeconds <= 3 && totalSeconds > 0 && totalSeconds !== lastCountdownSecond) {
+                playSfx('countdown');
+                lastCountdownSecond = totalSeconds;
+            }
+
             if (diff <= 2 * 60 * 1000 && diff >= 0) triggerAutoResetIfNeeded(nextUnlock.getTime());
-        } else if (elements.countdown) elements.countdown.textContent = 'Sin horario';
+        } else if (elements.countdown) {
+            elements.countdown.textContent = 'Sin horario';
+            lastCountdownSecond = null;
+        }
         offlineRoundPerfStart = null; offlineRoundLocalTs = null;
         currentRoundId = null;
     }
@@ -857,6 +975,40 @@ function initServerTimeOffset() {
     } catch (e) {
         serverTimeOffset = 0;
     }
+}
+
+/* ---------- Background Music ---------- */
+
+let backgroundMusic = null;
+
+function startBackgroundMusic() {
+    if (!audioContext || backgroundMusic) return;
+    ensureAudio();
+    const ctx = audioContext;
+    const melody = [
+        { freq: 523, dur: 0.2 }, { freq: 659, dur: 0.2 }, { freq: 784, dur: 0.2 },
+        { freq: 1047, dur: 0.4 }, { freq: 784, dur: 0.2 }, { freq: 659, dur: 0.2 }, { freq: 523, dur: 0.4 }
+    ];
+    let noteIndex = 0;
+    let nextNoteTime = ctx.currentTime;
+    function scheduleNote() {
+        if (!backgroundMusic) return;
+        const note = melody[noteIndex % melody.length];
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.type = 'square'; o.frequency.value = note.freq;
+        g.gain.setValueAtTime(0.02, nextNoteTime);
+        g.gain.exponentialRampToValueAtTime(0.001, nextNoteTime + note.dur);
+        o.start(nextNoteTime); o.stop(nextNoteTime + note.dur);
+        nextNoteTime += note.dur; noteIndex++;
+        setTimeout(scheduleNote, note.dur * 1000);
+    }
+    backgroundMusic = true; scheduleNote();
+}
+
+function stopBackgroundMusic() {
+    backgroundMusic = null;
 }
 
 /* ---------- Exposición debug ---------- */
